@@ -1,11 +1,9 @@
-# coding: utf-8
-
 """
 
-Executable   : No. Just Python Class.
-----------
+PYTHON CLASS & MODULE
+------ ----- - ------
 
-Dependencies : os, numpy, matplotlib, probe_frequency, pre_config
+Dependencies : os, numpy, matplotlib, shot_data, optimization_GD
 ------------
 
 Description :
@@ -18,71 +16,139 @@ Description :
 How to use :
 --- -- ---
     
-    For now just '.mat' files are acceptable and for sweep time of
-    8 microseconds. Some default importants are the frequency range
-    8.4 - 13.5 of reflectometer and some cut-off of problematic
-    beat frequency intevals, excluding in K band range f < 19 GHz
-    and f > 25.5 GHz. To better this, need be review the line
-    maximum method to extract beat frequency of spectrogram.
+    You must have connect with server to take data if tou not have the shot.
+    >>> import signal_analyse as sa
+    >>> M = sa.SF_analysis(shot_number)
 
-    Vacuum signal extract of 2 miliseconds by default.
+    Other way is to pass shot data folder on this computer with saved format
+    of shot_data.py class. Look there for more information.
+    >>> import signal_analyse as sa
+    >>> M = sa.SF_analysis(path_to_shot)
 
-    .TakeBF(time in ms, (optional) save image?, (optional) show ?)
-        returns the tuple (probe freq., beat freq) data.
-        The optional booleans are to draw image and show
+    At any time you can save Signal data for use later with fast access.
+    If you dont give any path on computer will save on current folder.
+    >>> M.SaveShot(path(optionally))
 
-    .EvalGD(time in ms, (optional)fit ?, (optional)show ?)
-        returns the tuple (probe freq., group delay) data.
-        curve_fit may take until a minute or more to result.
+    OBS: Some cuts of data are done before extract group delay because of
+         instability of boundary and loss of amplitude signal.
+
+DEVELOPED BY: ALEX ANDRIATI - USP
 
 """
 
-import os, numpy as np, matplotlib.mlab as mlab, pylab
+import shot_data as sd
+import os; 
+import numpy as np;
+import matplotlib.mlab as mlab
+import matplotlib.pyplot as plt
 import optimization_gd as opt
-from probe_frequency import PF
 
-class signal_analyse:
-    # Constants to eval group delay
-    c = 299792458.0;
-    a = 0.18;
-    R_wall = 0.22;
 
-    def __init__(self, shot_data):
-        self.data = shot_data;
-        self.r_dir = self.MakeDirectory();
-        self.pf = PF(self.data.n_sweep, self.data.fs, self.data.ts);
-        self.vac_bf = self.__TakeVacuumBF();
+def time2index(rate, t):
+    """ For t in milliseconds
+        For rate in Hz. """
+    return int(rate * t * 1E-3);
 
-    def MakeDirectory(self):
-        path = self.data.this_file_path + '#' + self.data.name + '/';
-        warn_msg = '\nAnalise de disparo ja iniciada.'  + \
-                'Possivel sobreposicao de resultados e figuras.'
-        # Make directory to keep image and results.
-        try: os.mkdir(path);
+def PreviousPow2(num):
+    """ Return an integer 'm' that is
+    the floor of number 'num' with 2^m """
+    i = 1; 
+    while(2**i < num): i += 1;
+    return (i - 1);
+
+class SF_analysis:
+    """ Data Structure to analysis a sweep frequency signal.
+        There are here main methods of interesr to analyse
+        Group Delay for any given time in milliseconds. Type
+        help of EvalGD and TakeBF methods (main mathods). """
+    c = 299792458.0;    # Light speed
+    a = 0.18;           # Plasma Radius
+    R_wall = 0.22;      # From center of plasma to camara wall.
+
+    def __init__(self, shot_number, path = '', Tvac = 2):
+        """ Constructor. Optionally you can define the path
+            to record resulds (second argument) or Time of
+            vacuum signal reference (third argument). """
+        # Critical process to access serve.
+        self.SD = sd.shot_data(shot_number);
+        # Validate the results path.
+        if path != '': self.DefinePath(path);
+        else:          self.path = path;
+        # Imaging properties for spectrograms.
+        self.nfft = 2 ** PreviousPow2(float(self.SD.Nsweep) / 5);
+        self.fft_step = 2;              # 'walk' 2 points to next window
+        self.PF = self.__ProbeFreq();   # Units in always GHz.
+        self.vacBF = self.__TakeVacuumBF(Tvac);
+
+    def DefinePath(self, folder):
+        """ Define a path on current computer to save data analysis. """
+        if not os.path.exists(folder): raise IOError('Folder Doesnt exist!');
+        if folder[-1] != '/': folder = folder + '/';
+        # Make new folder to keep results.
+        FullPath = folder + '#' + str(self.SD.shot_number) + '_results/';
+        warn_msg = '\nCareful, alredy has an initiated analysis.';
+        try: os.mkdir(FullPath);
         except OSError: print warn_msg;
-        return path;
+        self.path = FullPath;
 
-    def __TakeVacuumBF(self): return self.TakeBF(2);
+    def NearSweep(self, t):
+        """ For t im milliseconds
+            Return index of nearst 
+            sweep start. """
+        i = time2index(self.SD.rate, t);
+        while (self.SD.trig[i] > 0): i += 1;
+        while (self.SD.trig[i] < 0): i -= 1;
+        return (i + 1);
 
-    def TakeBF(self, time, save_im=True, show=False):
-        S_mean_K  = 0.
-        S_mean_Ka = 0.
-        i1, i2 = self.data.NextSweep(time);
-        time_elapse = 2 * self.data.ts;
+    def __ProbeFreq(self):
+        # First time centered on first FFT window
+        t0 = (self.nfft / 2) / self.SD.rate;
+        # Final time centered on last FFT window
+        tf = (self.SD.Nsweep - (self.nfft / 2)) / self.SD.rate;
+        # Number of points depending on step number points (fft_step)
+        length = (self.SD.Nsweep - self.nfft) / self.fft_step + 1;
+        # Set the vector of time to one sweep in us
+        Tsweep = 1E6 * np.linspace(t0, tf, length);
+        sweepRate = (self.SD.ff - self.SD.fi) / self.SD.st;
+        # K band ampl. by factor of 2
+        PF_K  = 2 * (Tsweep * sweepRate + self.SD.fi);
+        # Mark where Ka band initiate
+        self.IKA = PF_K.size;
+        # KA band ampl. by factor of 3
+        PF_KA = 3 * (Tsweep * sweepRate + self.SD.fi);
+        return np.concatenate([PF_K, PF_KA]);
+
+    def __TakeVacuumBF(self, t): return self.TakeBF(t);
+
+    def TakeBF(self, time, show=False, saveIm=False):
+        """ Call signature example: BF = M.TakeBF(70)
+            -----------------------------------------
+
+            Return the beat frequencia of signal to the given instant (time).
+            Also is considered a mean of power spectrum of ten sweeps, to
+            avoid some resolution problems. """
+        S_mean_K  = 0.;
+        S_mean_KA = 0.;
+        i1 = self.NearSweep(time);
+        i2 = i1 + int(self.SD.st * 1E-6 * self.SD.rate);
+        # time elapsed to next sweep in milliseconds
+        T_elapse = (self.SD.st + self.SD.si) * 1E-3;
         # mean of 10 spectrograms.
         for j in range(10):
             # K band
-            S, f, t = mlab.specgram(self.data.K[i1:i2], NFFT=self.pf.nfft,
-                    Fs=self.data.fs, noverlap=self.pf.nfft-2, pad_to=2**12);
+            S, f, t = mlab.specgram(self.SD.K[i1:i2], NFFT=self.nfft,
+                    Fs=self.SD.rate, noverlap=self.nfft-self.fft_step, 
+                    pad_to=2**12);
             S_mean_K += S / 10;
             # Ka band
-            S, f, t = mlab.specgram(self.data.Ka[i1:i2], NFFT=self.pf.nfft,
-                    Fs=self.data.fs, noverlap=self.pf.nfft-2, pad_to=2**12);
-            S_mean_Ka += S / 10;
+            S, f, t = mlab.specgram(self.SD.KA[i1:i2], NFFT=self.nfft,
+                    Fs=self.SD.rate, noverlap=self.nfft-self.fft_step, 
+                    pad_to=2**12);
+            S_mean_KA += S / 10;
             # update indexes to next sweep.
-            i1, i2 = self.data.NextSweep(time + 1E3 * time_elapse);
-            time_elapse += 2 * self.data.ts;
-        # Finish the mean.
+            i1 = self.NearSweep(time + T_elapse);
+            i2 = i1 + int(self.SD.st * 1E-6 * self.SD.rate);
+            T_elapse += (self.SD.st + self.SD.si) * 1E-3;
         # avoid useles frequency depends on the case
         if time < 10: 
             limSup = np.where(f > 1.65E7)[0].min();
@@ -91,87 +157,98 @@ class signal_analyse:
             limSup = np.where(f > 1.55E7)[0].min();
             limInf = np.where(f < 0.35E7)[0].max();
         # Take max line in spectrum.
-        freqIndexK  = S_mean_K[:][limInf:limSup].argmax(axis=0) + limInf;
-        freqIndexKa = S_mean_Ka[:][limInf:limSup].argmax(axis=0) + limInf;
+        freqIndexK  = S_mean_K[limInf:limSup].argmax(axis=0) + limInf;
+        freqIndexKA = S_mean_KA[limInf:limSup].argmax(axis=0) + limInf;
         # return to default image inferior limite
         limSup = np.where(f > 1.55E7)[0].min();
         limInf = np.where(f < 0.35E7)[0].max();
         # Take frequency of max line.
         BF_K  = f[freqIndexK];
-        BF_Ka = f[freqIndexKa];
+        BF_KA = f[freqIndexKA];
         # remove overlap if it has.
-        if (self.pf.noverlap_K > 0): BF_K = BF_K[:-self.pf.noverlap_K-1];
-        bf = np.concatenate([BF_K, BF_Ka]);
-        if (save_im):
-            S_K  = S_mean_K[:][limInf:limSup];
-            S_Ka = S_mean_Ka[:][limInf:limSup];
-            # Concat. Spectrum of two bands.
-            self.__DrawImage(S_K, S_Ka, time, f[limInf], f[limSup], bf, show);
-        return bf;
+        BF = np.concatenate([BF_K, BF_KA]);
+        if (saveIm or show):
+            S_K  = S_mean_K[limInf:limSup];
+            S_KA = S_mean_KA[limInf:limSup];
+            f1 = f[limInf]; # Inferior figure limit
+            f2 = f[limSup]; # superior figure limit
+            self.__DrawImage(S_K, S_KA, time, f1, f2, BF, show, saveIm);
+        return BF;
 
-    def EvalGD(self, time, fit_it=False, show=False):
+    def EvalGD(self, t, fit_it=False, show=False, saveIm=False):
+        """ Call signature example: PF, GD = M.EvalGD(70, booleans...)
+            ----------------------------------------------------------
+            
+            Use TakeBF method and compare of the given instant with vacuum
+            to resolve initialization problem and take group delay.
+            If you go to fit the curve, can take some time and signature
+            calling changes with the results parameters include. Use: 
+            PF, GD, Result_fit = M>EvalGD(70, True, True, True) """
         # Rate of probe frequency fo each band
-        sweep_rate_K  = 2 * (self.pf.ff - self.pf.f0) / self.data.ts
-        sweep_rate_Ka = 3 * (self.pf.ff - self.pf.f0) / self.data.ts
-        # Restrict K band analyses.
-        pf, vac_bf = self.__GoodBounds(self.vac_bf, 19E9, 25.3E9);
-        pf, bf = self.__GoodBounds(self.TakeBF(time), 19E9, 25.3E9);
-        i_Ka = np.where(pf > 25.5E9)[0].min();
-        GD_K  = (bf[:i_Ka] - vac_bf[:i_Ka]) / sweep_rate_K + 2 * (self.a +
-                self.R_wall) / self.c;
-        GD_Ka = (bf[i_Ka:] - vac_bf[i_Ka:]) / sweep_rate_Ka + 2 * (self.a +
-                self.R_wall) / self.c;
-        GD = np.concatenate([GD_K, GD_Ka]);
-        if(fit_it): 
-            opt_result = opt.fit_GD(pf, GD, self.r_dir, time, show);
-            return (pf, GD, opt_result);
+        sweepRate = (self.SD.ff - self.SD.fi) / self.SD.st;
+        # Restrict K band analyses. Avoid plasma boundary.
+        pf, vacBF = self.__GoodBounds(self.vacBF, 19, 25.3);
+        pf, BF = self.__GoodBounds(self.TakeBF(t), 19, 25.3);
+        IKA = np.where(pf > 25.3)[0].min(); # New KA start Index
+        GD_K  = 1E-6 * (BF[:IKA] - vacBF[:IKA]) / (2 * sweepRate) + \
+                2 * (self.a + self.R_wall) * 1E9 / self.c;
+        GD_KA = 1E-6 * (BF[IKA:] - vacBF[IKA:]) / (3 * sweepRate) + \
+                2 * (self.a + self.R_wall) * 1E9 / self.c;
+        GD = np.concatenate([GD_K, GD_KA]);
+        if(fit_it): # Critical step. Can take more than a minute to fit.
+            result = opt.fit_GD(pf*1E9, GD*1E-9, t, self.path, show, saveIm);
+            return (pf, GD, result);
         return (pf, GD);
 
     def __GoodBounds(self, bf, f1, f2):
-        i1_K = np.where(self.pf.data < f1)[0].max();
-        i2_K = np.where(self.pf.data < f2)[0].max();
-        pf_K = self.pf.data[i1_K:i2_K];
-        pf_Ka = self.pf.data[self.pf.init_Ka:];
+        """ Method to cut problematic data """
+        i1_K = np.where(self.PF <= f1)[0].max();
+        i2_K = np.where(self.PF <= f2)[0].max();
+        pf_K = self.PF[i1_K:i2_K];
+        pf_Ka = self.PF[self.IKA:];
         bf_K = bf[i1_K:i2_K];
-        bf_Ka = bf[self.pf.init_Ka:];
+        bf_Ka = bf[self.IKA:];
         good_pf = np.concatenate([pf_K, pf_Ka]);
         good_bf = np.concatenate([bf_K, bf_Ka]);
         return (good_pf, good_bf);
 
-    def __DrawImage(self, S_K, S_Ka, time, bf_inf, bf_sup, bf, show=False):
+    def __DrawImage(self, S_K, S_Ka, time, bf_inf, bf_sup, bf, show, saveIm):
         # Scale to simple units.
-        pf      = self.pf.data / 1E9;
-        bf_sup  = bf_sup / 1E6;
-        bf_inf  = bf_inf / 1E6;
-        disp_bf = bf / 1E6;
+        pf      = self.PF;
+        BF_sup  = bf_sup / 1E6;
+        BF_inf  = bf_inf / 1E6;
+        BF      = bf / 1E6;
         # image displayed one side for each band.
-        f, (ax1, ax2) = pylab.subplots(1, 2, sharey=True, figsize=(18, 8));
+        f, (ax1, ax2) = plt.subplots(1, 2, sharey=True, figsize=(18, 8));
         # Draw Spectrum of K band.
-        ax1.imshow(np.log(S_K), origin='lower', aspect='auto',
-                extent=[pf[0], pf[self.pf.init_Ka], bf_inf, bf_sup]);
+        ax1.imshow(np.log(S_K), origin='lower', aspect='auto', \
+                extent=[pf[0], pf[self.IKA-1], BF_inf, BF_sup]);
         # Draw Spectrum of Ka band.
-        ax2.imshow(np.log(S_Ka), origin='lower', aspect='auto',
-                extent=[pf[self.pf.init_Ka], pf[-1], bf_inf, bf_sup]);
+        ax2.imshow(np.log(S_Ka), origin='lower', aspect='auto', \
+                extent=[pf[self.IKA], pf[-1], BF_inf, BF_sup]);
         # Draw line of maximum for each spectrum.
-        ax1.plot(pf[:self.pf.init_Ka], disp_bf[:self.pf.init_Ka], 
-                'k-', linewidth=2);
-        ax2.plot(pf[self.pf.init_Ka:], disp_bf[self.pf.init_Ka:], 
-                'k-', linewidth=2);
+        ax1.plot(pf[:self.IKA], BF[:self.IKA], 'k-', linewidth=2);
+        ax2.plot(pf[self.IKA:], BF[self.IKA:], 'k-', linewidth=2);
         # Figure limits.
         f.subplots_adjust(wspace=0.02);
-        ax1.set_xlim(pf[0], pf[self.pf.init_Ka]);
-        ax1.set_ylim(bf_inf, bf_sup);
-        ax2.set_xlim(pf[self.pf.init_Ka], pf[-1]);
-        ax2.set_ylim(bf_inf, bf_sup);
+        ax1.set_xlim(pf[0], pf[self.IKA-1]);
+        ax1.set_ylim(BF_inf, BF_sup);
+        ax2.set_xlim(pf[self.IKA], pf[-1]);
+        ax2.set_ylim(BF_inf, BF_sup);
         # Figure labels (x comom label)
         ax1.set_ylabel('Beat Frequency (MHz)', fontsize=16);
         f.text(0.5, 0.03, 'Probe Frequency (GHz)', ha='center', fontsize=16);
         ax1.set_title('\"K\" band', fontsize=16); 
         ax2.set_title('\"Ka\" Band', fontsize=16);
         # Switch case if vacuum or plasma to choose a name.
-        if time > 10 : figName = '#' + self.data.name + '_%.2f.jpg' % time
-        else : figName = '#' + self.data.name + '_vacuum_%.2f.jpg' % time
-        f.savefig(self.r_dir + figName, dpi=150, bbox_inches='tight');
+        if time > 10 : 
+            figName = '#' + str(self.SD.shot_number) + '_%.2f.jpg' % time
+        else : 
+            figName = '#' + str(self.SD.shot_number) + '_vacuum.jpg'
+        if saveIm: 
+            f.savefig(self.path + figName, dpi=150, bbox_inches='tight');
         # if required display image.
-        if (show): pylab.show(f);
-        else:      pylab.close(f);
+        if (show): plt.show(f);
+        else:      plt.close(f);
+
+    def SaveShot(self, path=''): self.SD.SaveShot(path);

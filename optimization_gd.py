@@ -1,15 +1,20 @@
 """
-    Python Module of Functions
-    ------ ------ -- ---------
 
-    Dependencies: gaussian_hat, matplotlib.pyplot, numpy, scipy.optimize.
-    -------------
+Python Module of Functions
+------ ------ -- ---------
 
-    Example to Use:
-    ------- -- ----
+Dependencies: gaussian_hat, matplotlib.pyplot, numpy, scipy.optimize.
+-------------
+
+Example to Use:
+------- -- ----
+
     >>> import gaussian_hat as gh.
-    >>> dict = gh.fit_GD(xdata, ydata, path_to_directory, time, show=boolean).
+    >>> dict = gh.fit_GD(xdata, ydata, path_to_directory, time, show, save).
     where just first and second argument are obrigatory.
+
+Developed by: Alex Andriati - USP
+
 """
 
 import scipy.optimize as opt, gaussian_hat as gh;
@@ -29,10 +34,10 @@ def CrossCenter(GD):
     """ Find most probably index that cross max density. """
     sentinel = -1;
     for i in range(GD.size) :
-        if (GD[i] > 2.2e-9): return i;
+        if (GD[i] > 2.2E-9): return i;
     return sentinel;
 
-def fit_GD(pf, gd, path='', time=70.0, show_it=False):
+def fit_GD(pf, gd, time=70.0, path='', show_it=False, saveIm=True):
     """ First two arguments takes the data. Others arguments optional.
         Based on data points call curve_fit for the profile defined
         by gaussian_hat, wich can be generalized for others profiles.
@@ -49,15 +54,15 @@ def fit_GD(pf, gd, path='', time=70.0, show_it=False):
     CC = CrossCenter(gd);
     if (CC > 0):
         n0_ref = gh.FrequencyToDensity(pf[CC]);
-        print '\nAjustando curvas. Pode demorar... n0_ref = %.2g' % n0_ref
+        print '\nFitting curve, can take a minute... n0_ref ~ %.2g' % n0_ref
     else:
         n0_ref = gh.FrequencyToDensity(40.5E9);
-        print '\nAjustando curvas. Pode demorar... n0_ref = none'
+        print '\nFitting curve, can take a minute... n0_ref = Unknow'
 
     # Take the best curve by least square method.
     # It depends strongly of initial guess in both quality and time.
     # Besides it, make some statistics of the result.
-    guess = [0.87*n0_ref, 1.1, 0.45, a / 4.8];
+    guess = [0.87 * n0_ref, 1.1, 0.45, a / 4.8];
     p, mcov = opt.curve_fit(gh.OptGroupDelay, pf[:CC], gd[:CC], p0=guess);
     residuals = gh.Residues(pf[:CC], gd[:CC], p[0], p[1], p[2], p[3]);
     # Remake the curve data for more resolution and change units.
@@ -79,7 +84,7 @@ def fit_GD(pf, gd, path='', time=70.0, show_it=False):
 
     fig = plt.figure(time, figsize=(13, 9));
     plt.xlim(pf[0] - 1, pf[CC] + 1);
-    plt.ylim(0.5, 2.2);
+    plt.ylim(0.4, 2.2);
     plt.xlabel(r'Probe Frequency (GHz)', fontsize=18);
     plt.ylabel(r'Group Delay (ns)', fontsize=18);
     
@@ -106,13 +111,12 @@ def fit_GD(pf, gd, path='', time=70.0, show_it=False):
     plt.legend(loc='upper left', fontsize=18);
     plt.grid();
     
-    # Save Figure
-    # ---- ------
-
-    fig_name = path + 'time_%.2f.png' % time;
-
-    try: fig.savefig(fig_name, dpi=150, bbox_inches='tight');
-    except IOError: fig.savefig(fig_name, dpi=150, bbox_inches='tight');
+    # Save & Show Figure
+    # ---- - ---- ------
+    
+    if saveIm:
+        fig_name = path + 'time_%.2f.png' % time;
+        fig.savefig(fig_name, dpi=150, bbox_inches='tight');
 
     if(show_it): plt.show(fig);
     else:        plt.close(fig);

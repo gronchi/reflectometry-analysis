@@ -1,42 +1,47 @@
-# coding: utf-8
 """
-    Python Script
-    ------ ------
 
-    Dependencies: numpy, shot_dat, signal_analyse, sys.
-    -------------
+Python Script
+------ ------
 
-    Execution: python time_evolution shot_name t0 tf dt
-    ----------
+Dependencies: numpy, signal_analyse, sys.
+-------------
+
+Execution: $ python time_evolution shot_number t0 tf dt
+----------
 
     Evaluate Group Delay by optimized curve fitted method. Get just the
     center density from result parameters and estimate error.
 
-    shot_name -> must have the same extension as showed in pre_config.dat
-    to --------> Initial instant in miliseconds
-    tf --------> final instant in miliseconds
-    dt --------> time interval between calculations
+    shot_number --> shot to accsess on MDSplus
+    to -----------> Initial instant in miliseconds
+    tf -----------> final instant in miliseconds
+    dt -----------> time interval between calculations
+
+Developed by: Alex Andriati - USP
+
 """
 
 import sys;
 from numpy import arange, sqrt;
-from shot_data import shot_data;
-from signal_analyse import signal_analyse;
+import signal_analyse as sa;
+
+folder = raw_input('\nPath of folder to send file results: ');
+file_name = raw_input('\nFile name to record results: ');
 
 t1 = float(sys.argv[2]);
 t2 = float(sys.argv[3]);
 dt = float(sys.argv[4]);
-data = shot_data(sys.argv[1]);
-data_analyse = signal_analyse(data);
+M  = sa.SF_analysis(int(sys.argv[1]), folder);
 
-file_name = raw_input('\nNome do arquivo para gravar resultados: ');
-f = open(data_analyse.r_dir + file_name, 'w');
+f = open(M.path + file_name, 'w');
+
+# Warning when do not 
 war_msg = '\nParametros para o instante %.3f nao encontrado.'
 war_msg = war_msg + ' Maximo de tentativas excedido!'
 
 for t in arange(t1, t2, dt):
     print '\nInstante = %.3fms' %t;
-    try: pf, gd, result = data_analyse.EvalGD(t, True, False);
+    try: pf, gd, result = M.EvalGD(t, True, saveIm=True);
     except RuntimeError: print war_msg; continue;
     # Extract useful results.
     params = result['params'];
