@@ -10,7 +10,7 @@ Description :
 -----------
 
     An object of this class can take beat frequency or group delay at any
-    time (in ms) of a given shot passed on constructor. This is a minimal
+    time (in ms) for a given shot passed on constructor. This is a minimal
     version in constant development.
 
 How to use :
@@ -25,7 +25,8 @@ How to use :
     >>> import signal_analyse as sa
     >>> M = sa.SF_analysis(path_to_shot)
 
-    At any time you can save Signal data for use later with fast access.
+    At any time you can save Signal data to load after as metioned above.
+    This way provides fast loading compared to MDSplus like.
     If you dont give any path on computer will save on current folder.
     >>> M.SaveShot(path(optionally))
 
@@ -65,12 +66,16 @@ class SF_analysis:
     a = 0.18;           # Plasma Radius
     R_wall = 0.22;      # From center of plasma to camara wall.
 
-    def __init__(self, shot_number, path = '', Tvac = 2):
+    def __init__(self, shot, path = '', Tvac = 2):
         """ Constructor. Optionally you can define the path
             to record resulds (second argument) or Time of
-            vacuum signal reference (third argument). """
+            vacuum signal reference (third argument). 
+            First Argument takes a integer to connect to
+            server by MDSplus and read the data channels
+            or a string being a path to saved data from
+            SaveShot method like.                   """
         # Critical process to access serve.
-        self.SD = sd.shot_data(shot_number);
+        self.SD = sd.shot_data(shot);
         # Validate the results path.
         if path != '': self.DefinePath(path);
         else:          self.path = path;
