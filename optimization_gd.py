@@ -62,7 +62,7 @@ def fit_GD(pf, gd, time=70.0, path='', show_it=False, saveIm=True):
     # Take the best curve by least square method.
     # It depends strongly of initial guess in both quality and time.
     # Besides it, make some statistics of the result.
-    guess = [0.87 * n0_ref, 1.1, 0.45, a / 4.8];
+    guess = [0.81 * n0_ref, 1.3, 0.5, 0.3 * a];
     p, mcov = opt.curve_fit(gh.OptGroupDelay, pf[:CC], gd[:CC], p0=guess);
     residuals = gh.Residues(pf[:CC], gd[:CC], p[0], p[1], p[2], p[3]);
     # Remake the curve data for more resolution and change units.
@@ -82,12 +82,13 @@ def fit_GD(pf, gd, time=70.0, path='', show_it=False, saveIm=True):
 
     z = 1; # number of sigmas of filled area.
 
-    fig = plt.figure(time, figsize=(13, 9));
-    plt.xlim(pf[0] - 1, pf[CC] + 1);
+    fig = plt.figure(time, figsize=(16, 9));
+    plt.xlim(18, 40);
     plt.ylim(0.4, 2.2);
     plt.xlabel(r'Probe Frequency (GHz)', fontsize=18);
     plt.ylabel(r'Group Delay (ns)', fontsize=18);
-    
+    plt.title(r'\#31877', fontsize=18);
+
     # Plot data Points
     # ---- ---- ------
 
@@ -104,7 +105,7 @@ def fit_GD(pf, gd, time=70.0, path='', show_it=False, saveIm=True):
     line3 = '$\\qquad \\beta  \\ =\\ %.2f$\n';
     line4 = '$\\qquad \\alpha \\ =\\ %.2f$';
     line_name = line1 + line2 + line3 + line4;
-    line_name = line_name % (n_max/1E19, p[3]/a, p[2]**2, p[1]);
+    line_name = line_name % (n_max/1E19, abs(p[3]/a), p[2]**2, p[1]);
 
     plt.fill_between(PF, (GD + z*Err), (GD - z*Err), color='k', alpha=0.15);
     plt.plot(PF, GD, 'k-', linewidth=1.5, label=line_name);
